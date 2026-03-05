@@ -1,0 +1,5 @@
+com/example/similarity/SimilarityApplication.class
+com/example/similarity/model/SimilarityResponse.class
+com/example/similarity/dto/SimilarityRequest.class
+com/example/similarity/controller/SimilarityController.class
+com/example/similarity/service/SimilarityService.class
