@@ -21,6 +21,8 @@ public class SimilarityController {
         String a = request.getA();
         String b = request.getB();
         log.info("日志输入进去");
+        log.info("这里是二勇要打印的数据");
+        System.out.println("二勇说你好");
         // 原来的业务逻辑不变
         return similarityService.calculateSimilarity(a, b);
     }
