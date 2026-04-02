@@ -1,131 +1,106 @@
 package com.example.similarity.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.*;
-import okhttp3.RequestBody;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-import java.util.HashMap;
+import java.io.IOException;
 import java.util.Map;
 
 @RestController
 public class BridgeController {
 
-    // ====================== 【你只需要改这里】======================
-    private static final String FEISHU_APP_ID = "cli_a927ff2fe7f85bc8";
-    private static final String FEISHU_APP_SECRET = "rJIpd9gEpqYtXYGEURNd4cUXWuBRMYLY";
-    private static final String OPENCLAW_API = "http://172.17.0.79:18789/api/exec";
-    private static final String GROUP_ID = "oc_b09887806f8572556927ffbf42bedd5a";
-    private static final String AT_USER_ID = "ou_cfa093ba25145df3ff32d119a35d998f";
-    private static final String FEISHU_VERIFY_TOKEN = "1sANOBaXsECpFcwUb1tsdfTt0hkcRPrD";
-    // =================================================================
+    // ==================== 【配置信息】 ====================
+    private static final String OPENCLAW_API = "http://127.0.0.1:18789/api/exec";
 
     private final OkHttpClient client = new OkHttpClient();
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private static final MediaType JSON_MEDIA_TYPE = MediaType.parse("application/json; charset=utf-8");
 
-    // ====================== 飞书回调（修复校验 + 消息解析）======================
+    // OkHttp 4.12.0 推荐使用 MediaType.parse 或 MediaType.get
+    private static final MediaType JSON_TYPE = MediaType.get("application/json; charset=utf-8");
+
     @PostMapping("/feishu/event")
     public Map<String, Object> receiveFeishuEvent(@org.springframework.web.bind.annotation.RequestBody Map<String, Object> body) {
         try {
+            // 1. 响应飞书校验
             if ("url_verification".equals(body.get("type"))) {
                 return Map.of("challenge", body.get("challenge"));
             }
 
-            if (!"im.message.receive_v1".equals(body.get("event_type"))) {
-                return Map.of("code", 0);
+            // 2. 解析消息内容
+            if ("event_callback".equals(body.get("type"))) {
+                Map<String, Object> event = (Map<String, Object>) body.get("event");
+                if (event != null) {
+                    Map<String, Object> message = (Map<String, Object>) event.get("message");
+                    if (message != null && "text".equals(message.get("message_type"))) {
+
+                        String contentStr = (String) message.get("content");
+                        JsonNode contentNode = objectMapper.readTree(contentStr);
+                        String userInput = contentNode.get("text").asText();
+
+                        // 3. 核心执行逻辑
+                        executeAppCommand(userInput);
+                    }
+                }
             }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return Map.of("code", 0, "msg", "ok");
+    }
 
-            Map<String, Object> event = (Map<String, Object>) body.get("event");
-            Map<String, Object> message = (Map<String, Object>) event.get("message");
-            String contentJson = (String) message.get("content");
-            Map<String, String> content = objectMapper.readValue(contentJson, Map.class);
-            String text = content.get("text");
+    private void executeAppCommand(String text) {
+        if (text.contains("打开") || text.contains("启动")) {
+            String softwareName = text.replace("打开", "").replace("启动", "").trim();
 
-            System.out.println("✅ 飞书指令：" + text);
+            // 安全过滤：防止 Shell 注入，只留文字和数字
+            String safeName = softwareName.replaceAll("[^a-zA-Z0-9\\u4e00-\\u9fa5 ]", "");
 
-            Map<String, String> req = new HashMap<>();
-            req.put("command", text);
+            if (!safeName.isEmpty()) {
+                String shellCmd = "open -a \"" + safeName + "\"";
+                callOpenClaw(shellCmd);
+            }
+        }
+    }
 
-            String jsonReq = objectMapper.writeValueAsString(req);
-            RequestBody requestBody = RequestBody.create(jsonReq.getBytes(), JSON_MEDIA_TYPE);
+    private void callOpenClaw(String command) {
+        try {
+            Map<String, String> payload = Map.of("command", command);
+            String jsonStr = objectMapper.writeValueAsString(payload);
+
+            // 【OkHttp 4.12.0 核心修正写法】
+            // 在 4.x 版本中，Java 调用的 create 方法签名是 (String, MediaType)
+            // 如果 IDEA 还报红，请确保顶部的 import okhttp3.RequestBody; 正确
+            okhttp3.RequestBody body = okhttp3.RequestBody.create(jsonStr, JSON_TYPE);
 
             Request request = new Request.Builder()
                     .url(OPENCLAW_API)
-                    .post(requestBody)
-                    .build();
-
-            try (Response response = client.newCall(request).execute()) {
-                if (!response.isSuccessful()) {
-                    throw new RuntimeException("请求失败：" + response.code());
-                }
-            }
-
-            return Map.of("code", 0, "msg", "success");
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            return Map.of("code", 500, "msg", e.getMessage());
-        }
-    }
-
-    // ====================== OpenClaw → 飞书发消息 ======================
-    @GetMapping("/openclaw/toFeishu")
-    public String sendToFeishu(@RequestParam String msg) {
-        try {
-            String token = getTenantAccessToken();
-
-            Map<String, String> content = new HashMap<>();
-            content.put("text", "<at user_id=\"" + AT_USER_ID + "\"></at> " + msg);
-
-            Map<String, Object> data = new HashMap<>();
-            data.put("receive_id", GROUP_ID);
-            data.put("msg_type", "text");
-            data.put("content", objectMapper.writeValueAsString(content));
-
-            String jsonBody = objectMapper.writeValueAsString(data);
-            RequestBody body = RequestBody.create(jsonBody.getBytes(), JSON_MEDIA_TYPE);
-
-            Request request = new Request.Builder()
-                    .url("https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id")
-                    .addHeader("Authorization", "Bearer " + token)
                     .post(body)
                     .build();
 
-            try (Response response = client.newCall(request).execute()) {
-                if (!response.isSuccessful()) {
-                    throw new RuntimeException("发送失败：" + response.code());
+            // 异步发送指令
+            client.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    System.err.println("OpenClaw 请求失败: " + e.getMessage());
                 }
-            }
 
-            return "success";
-
+                @Override
+                public void onResponse(Call call, Response response) throws IOException {
+                    // 使用 try-with-resources 确保 response 关闭，避免 4.12.0 常见的连接泄露
+                    try (Response res = response) {
+                        if (res.isSuccessful()) {
+                            System.out.println("指令已送达 Mac Mini: " + command);
+                        } else {
+                            System.err.println("OpenClaw 返回异常码: " + res.code());
+                        }
+                    }
+                }
+            });
         } catch (Exception e) {
             e.printStackTrace();
-            return "fail";
-        }
-    }
-
-    // ====================== 获取飞书 Token ======================
-    private String getTenantAccessToken() throws Exception {
-        Map<String, String> params = new HashMap<>();
-        params.put("app_id", FEISHU_APP_ID);
-        params.put("app_secret", FEISHU_APP_SECRET);
-
-        String jsonParams = objectMapper.writeValueAsString(params);
-        RequestBody body = RequestBody.create(jsonParams.getBytes(), JSON_MEDIA_TYPE);
-
-        Request request = new Request.Builder()
-                .url("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal/")
-                .post(body)
-                .build();
-
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                throw new RuntimeException("获取 Token 失败：" + response.code());
-            }
-            Map<String, Object> result = objectMapper.readValue(response.body().string(), Map.class);
-            return (String) result.get("tenant_access_token");
         }
     }
 }
