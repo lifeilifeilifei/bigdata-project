@@ -14,7 +14,7 @@ public class BridgeController {
     // ====================== 【你只需要改这里】======================
     private static final String FEISHU_APP_ID = "cli_a927ff2fe7f85bc8";
     private static final String FEISHU_APP_SECRET = "rJIpd9gEpqYtXYGEURNd4cUXWuBRMYLY";
-    private static final String OPENCLAW_API = "http://127.0.0.1:18800/exec";
+    private static final String OPENCLAW_API = "http://127.0.0.1:18789/api/exec";
     private static final String GROUP_ID = "oc_b09887806f8572556927ffbf42bedd5a";
     private static final String AT_USER_ID = "ou_cfa093ba25145df3ff32d119a35d998f";
     private static final String FEISHU_VERIFY_TOKEN = "1sANOBaXsECpFcwUb1tsdfTt0hkcRPrD";
